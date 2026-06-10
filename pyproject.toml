@@ -15,6 +15,7 @@ dependencies = []
 
 [project.scripts]
 zoemzone = "zoemzone.main:run"
+zoemzone-shp-gui = "zoemzone.shapefile_export_gui:run"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -59,3 +59,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
    ```powershell
    python -m pytest
    ```
+
+## Shapefile GUI export
+
+Launch the GUI to select a subfolder, list `.shp` files, and export selected files to Excel:
+
+```powershell
+zoemzone-shp-gui
+```
