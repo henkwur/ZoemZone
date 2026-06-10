@@ -28,6 +28,7 @@ class ShapefileExportApp:
         self.input_folder_var = tk.StringVar(value=str(DEFAULT_INPUT_FOLDER))
         self.output_folder_var = tk.StringVar(value=str(DEFAULT_INPUT_FOLDER))
         self.field_var = tk.StringVar()
+        self.field2_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Select a subfolder to start.")
 
         self.last_output_folder = DEFAULT_INPUT_FOLDER
@@ -63,11 +64,16 @@ class ShapefileExportApp:
         if isinstance(selected_field, str) and selected_field.strip():
             self.field_var.set(selected_field)
 
+        selected_field2 = settings.get("selected_field2")
+        if isinstance(selected_field2, str):
+            self.field2_var.set(selected_field2)
+
     def _save_settings(self) -> None:
         settings = {
             "input_folder": self.input_folder_var.get().strip(),
             "output_folder": str(self.last_output_folder),
             "selected_field": self.field_var.get().strip(),
+            "selected_field2": self.field2_var.get().strip(),
         }
 
         try:
@@ -148,6 +154,21 @@ class ShapefileExportApp:
         self.field_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
         self.field_combo.bind("<<ComboboxSelected>>", self._on_field_selected)
 
+        field2_row = ttk.Frame(container)
+        field2_row.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(field2_row, text="Second field (optional):").pack(side=tk.LEFT)
+        self.field2_combo = ttk.Combobox(
+            field2_row,
+            textvariable=self.field2_var,
+            state="readonly",
+        )
+        self.field2_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        self.field2_combo.bind("<<ComboboxSelected>>", self._on_field_selected)
+        ttk.Button(
+            field2_row, text="Clear", command=self._clear_field2
+        ).pack(side=tk.LEFT)
+
         output_row = ttk.Frame(container)
         output_row.pack(fill=tk.X, pady=(0, 8))
 
@@ -201,17 +222,21 @@ class ShapefileExportApp:
 
         fields = self._list_exportable_fields(shapefile)
         self.field_combo["values"] = fields
+        self.field2_combo["values"] = [""] + fields
 
-        if self.field_var.get() in fields:
-            return
+        if self.field_var.get() not in fields:
+            self.field_var.set(fields[0] if fields else "")
 
-        if fields:
-            self.field_var.set(fields[0])
-            self._save_settings()
-        else:
-            self.field_var.set("")
+        if self.field2_var.get() not in [""] + fields:
+            self.field2_var.set("")
+
+        self._save_settings()
 
     def _on_field_selected(self, _event: tk.Event[tk.Misc] | None = None) -> None:
+        self._save_settings()
+
+    def _clear_field2(self) -> None:
+        self.field2_var.set("")
         self._save_settings()
 
     def select_output_folder(self) -> None:
@@ -243,7 +268,9 @@ class ShapefileExportApp:
             self._on_shapefile_selected()
         else:
             self.field_combo["values"] = []
+            self.field2_combo["values"] = []
             self.field_var.set("")
+            self.field2_var.set("")
             self.status_var.set("No .shp files found in the selected folder.")
 
     def _list_exportable_fields(self, shapefile: Path) -> list[str]:
@@ -254,16 +281,25 @@ class ShapefileExportApp:
         ]
 
     def _field_summary_rows(
-        self, shapefile: Path, field_name: str
+        self, shapefile: Path, field_name: str, field2_name: str | None = None
     ) -> pd.DataFrame:
-        values: list[object] = []
-        with arcpy.da.SearchCursor(str(shapefile), [field_name]) as cursor:
-            for row in cursor:
-                value = row[0]
-                values.append("<NULL>" if value is None else value)
+        fields = [field_name] if not field2_name else [field_name, field2_name]
+        records: list[tuple] = []
 
-        series = pd.Series(values, name=field_name)
-        summary = series.value_counts(dropna=False).rename_axis(field_name).reset_index(name="count")
+        with arcpy.da.SearchCursor(str(shapefile), fields) as cursor:
+            for row in cursor:
+                records.append(
+                    tuple("<NULL>" if v is None else v for v in row)
+                )
+
+        df = pd.DataFrame(records, columns=fields)
+        summary = (
+            df.groupby(fields, dropna=False)
+            .size()
+            .reset_index(name="count")
+            .sort_values("count", ascending=False)
+            .reset_index(drop=True)
+        )
         return summary
 
     def export_selected(self) -> None:
@@ -282,12 +318,20 @@ class ShapefileExportApp:
             messagebox.showwarning("No output", "Select an Excel output folder.")
             return
 
+        selected_field2 = self.field2_var.get().strip() or None
+
         try:
-            summary_df = self._field_summary_rows(selected_shp, selected_field)
+            summary_df = self._field_summary_rows(selected_shp, selected_field, selected_field2)
             output_dir = Path(output_folder)
             output_dir.mkdir(parents=True, exist_ok=True)
             safe_field = re.sub(r"[^A-Za-z0-9_-]", "_", selected_field)
-            output = output_dir / f"{selected_shp.stem}_{safe_field}_summary.xlsx"
+            folder_name = Path(self.input_folder_var.get().strip()).name
+            gemeente_prefix = folder_name.split(" ", 1)[-1] if " " in folder_name else folder_name
+            field_part = safe_field
+            if selected_field2:
+                safe_field2 = re.sub(r"[^A-Za-z0-9_-]", "_", selected_field2)
+                field_part = f"{safe_field}_x_{safe_field2}"
+            output = output_dir / f"{gemeente_prefix}_{selected_shp.stem}_{field_part}_summary.xlsx"
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 summary_df.to_excel(writer, index=False, sheet_name="Summary")
@@ -303,12 +347,13 @@ class ShapefileExportApp:
             self.last_output_folder = output_dir
             self.output_folder_var.set(str(output_dir))
             self._save_settings()
+            field_desc = selected_field if not selected_field2 else f"{selected_field} × {selected_field2}"
             messagebox.showinfo(
                 "Export complete",
-                f"Exported {len(summary_df)} unique value(s) for field '{selected_field}' to:\n{output}",
+                f"Exported {len(summary_df)} combination(s) for '{field_desc}' to:\n{output}",
             )
             self.status_var.set(
-                f"Exported unique values summary for field '{selected_field}'."
+                f"Exported summary for '{field_desc}' ({len(summary_df)} row(s))."
             )
             self._open_output_folder(output_dir)
         except Exception as exc:  # noqa: BLE001
