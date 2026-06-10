@@ -1,6 +1,6 @@
 # ZoemZone
 
-A minimal Python starter project scaffolded in VS Code.
+A Python project for spatial data analysis using ArcPy and ArcGIS Pro.
 
 ## Quickstart
 
@@ -62,8 +62,35 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ## Shapefile GUI export
 
-Launch the GUI to select a subfolder, list `.shp` files, and export selected files to Excel:
+Launch the GUI tool to analyse shapefiles and export summaries to Excel:
 
 ```powershell
 zoemzone-shp-gui
 ```
+
+### What it does
+
+1. **Select input subfolder** — browse to a folder inside `E:\2026\ZoemZoneLimburg` (default).
+2. **Scan shapefiles** — lists all `.shp` files in the selected folder automatically on open.
+3. **Select a shapefile** — clicking a file in the list loads its available fields.
+4. **Select a field** — choose any non-geometry field from the dropdown to summarise.
+5. **Select output folder** — browse to the destination folder for the Excel file.
+6. **Export** — writes an Excel file named `<shapefile>_<field>_summary.xlsx` containing:
+   - All unique values of the selected field
+   - Record count per value
+   - Columns auto-fitted to their content width
+7. **Output folder opens automatically** after a successful export.
+
+### Persistent settings
+
+The last used input folder, output folder, and selected field are saved to:
+
+`%USERPROFILE%\.zoemzone_shp_gui_settings.json`
+
+These are restored automatically on next launch.
+
+### Data folder
+
+Input data is expected under:
+
+`E:\2026\ZoemZoneLimburg`
