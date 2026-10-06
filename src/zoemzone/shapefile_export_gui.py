@@ -30,6 +30,7 @@ class ShapefileExportApp:
         self.field_var = tk.StringVar()
         self.field2_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Select a subfolder to start.")
+        self.dataset_map: dict[str, dict[str, str]] = {}
 
         self.last_output_folder = DEFAULT_INPUT_FOLDER
         self._load_settings()
@@ -121,7 +122,7 @@ class ShapefileExportApp:
 
         ttk.Label(
             list_row,
-            text="Shapefiles (.shp) in selected folder:",
+            text="Input shapefiles (.shp) in selected folder:",
         ).pack(anchor=tk.W)
 
         listbox_frame = ttk.Frame(list_row)
@@ -205,22 +206,21 @@ class ShapefileExportApp:
             self._save_settings()
             self.scan_shapefiles()
 
-    def _selected_shapefile_path(self) -> Path | None:
+    def _selected_dataset_info(self) -> dict[str, str] | None:
         selected = self.listbox.curselection()
         if not selected:
             return None
 
-        input_folder = Path(self.input_folder_var.get().strip())
-        return input_folder / self.listbox.get(selected[0])
+        return self.dataset_map.get(self.listbox.get(selected[0]))
 
     def _on_shapefile_selected(self, _event: tk.Event[tk.Misc] | None = None) -> None:
-        shapefile = self._selected_shapefile_path()
-        if shapefile is None:
+        dataset_info = self._selected_dataset_info()
+        if dataset_info is None:
             self.field_combo["values"] = []
             self.field_var.set("")
             return
 
-        fields = self._list_exportable_fields(shapefile)
+        fields = self._list_exportable_fields(dataset_info["dataset_path"])
         self.field_combo["values"] = fields
         self.field2_combo["values"] = [""] + fields
 
@@ -250,6 +250,7 @@ class ShapefileExportApp:
             self._save_settings()
 
     def scan_shapefiles(self) -> None:
+        self.dataset_map.clear()
         self.listbox.delete(0, tk.END)
         input_folder = Path(self.input_folder_var.get().strip())
 
@@ -257,12 +258,19 @@ class ShapefileExportApp:
             self.status_var.set("Select a valid input subfolder.")
             return
 
-        shapefiles = sorted(input_folder.glob("*.shp"))
+        shapefiles = sorted(input_folder.rglob("*.shp"))
         for shp in shapefiles:
-            self.listbox.insert(tk.END, shp.name)
+            rel_shp = shp.relative_to(input_folder)
+            display_name = str(rel_shp)
+            self.dataset_map[display_name] = {
+                "dataset_path": str(shp),
+                "output_stem": shp.stem,
+                "display_name": display_name,
+            }
+            self.listbox.insert(tk.END, display_name)
 
         if shapefiles:
-            self.status_var.set(f"Found {len(shapefiles)} shapefile(s).")
+            self.status_var.set(f"Found {len(shapefiles)} .shp file(s).")
             self.listbox.selection_clear(0, tk.END)
             self.listbox.selection_set(0)
             self._on_shapefile_selected()
@@ -271,22 +279,22 @@ class ShapefileExportApp:
             self.field2_combo["values"] = []
             self.field_var.set("")
             self.field2_var.set("")
-            self.status_var.set("No .shp files found in the selected folder.")
+            self.status_var.set("No .shp inputs found in the selected folder.")
 
-    def _list_exportable_fields(self, shapefile: Path) -> list[str]:
+    def _list_exportable_fields(self, dataset_path: str) -> list[str]:
         return [
             field.name
-            for field in arcpy.ListFields(str(shapefile))
+            for field in arcpy.ListFields(dataset_path)
             if field.type not in {"Geometry", "Raster", "Blob"}
         ]
 
     def _field_summary_rows(
-        self, shapefile: Path, field_name: str, field2_name: str | None = None
+        self, dataset_path: str, field_name: str, field2_name: str | None = None
     ) -> pd.DataFrame:
         fields = [field_name] if not field2_name else [field_name, field2_name]
         records: list[tuple] = []
 
-        with arcpy.da.SearchCursor(str(shapefile), fields) as cursor:
+        with arcpy.da.SearchCursor(dataset_path, fields) as cursor:
             for row in cursor:
                 records.append(
                     tuple("<NULL>" if v is None else v for v in row)
@@ -303,9 +311,9 @@ class ShapefileExportApp:
         return summary
 
     def export_selected(self) -> None:
-        selected_shp = self._selected_shapefile_path()
-        if selected_shp is None:
-            messagebox.showwarning("No selection", "Select one shapefile.")
+        selected_info = self._selected_dataset_info()
+        if selected_info is None:
+            messagebox.showwarning("No selection", "Select one input dataset.")
             return
 
         selected_field = self.field_var.get().strip()
@@ -321,7 +329,9 @@ class ShapefileExportApp:
         selected_field2 = self.field2_var.get().strip() or None
 
         try:
-            summary_df = self._field_summary_rows(selected_shp, selected_field, selected_field2)
+            summary_df = self._field_summary_rows(
+                selected_info["dataset_path"], selected_field, selected_field2
+            )
             output_dir = Path(output_folder)
             output_dir.mkdir(parents=True, exist_ok=True)
             safe_field = re.sub(r"[^A-Za-z0-9_-]", "_", selected_field)
@@ -331,7 +341,9 @@ class ShapefileExportApp:
             if selected_field2:
                 safe_field2 = re.sub(r"[^A-Za-z0-9_-]", "_", selected_field2)
                 field_part = f"{safe_field}_x_{safe_field2}"
-            output = output_dir / f"{gemeente_prefix}_{selected_shp.stem}_{field_part}_summary.xlsx"
+            output = output_dir / (
+                f"{gemeente_prefix}_{selected_info['output_stem']}_{field_part}_summary.xlsx"
+            )
 
             with pd.ExcelWriter(output, engine="openpyxl") as writer:
                 summary_df.to_excel(writer, index=False, sheet_name="Summary")
