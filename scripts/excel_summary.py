@@ -144,7 +144,7 @@ def _default_output_path(input_files: list[Path]) -> Path:
     parents = {item.parent for item in input_files}
     if len(parents) == 1:
         return next(iter(parents)) / filename
-    return Path.cwd() / filename
+    return input_files[0].parent / filename
 
 
 def _input_folder_label(input_files: list[Path]) -> str:
